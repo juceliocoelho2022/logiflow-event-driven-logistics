@@ -1,5 +1,7 @@
 # LogiFlow
 
+![Arquitetura do sistema LogiFlow](docs/images/logiflow-arquitetura.png)
+
 Sistema de logística orientado a eventos para portfólio, construído com Java 21, Spring Boot, PostgreSQL, Apache Kafka e React.
 
 ## Arquitetura da Sprint 1
