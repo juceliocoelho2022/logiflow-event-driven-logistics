@@ -1,0 +1,3 @@
+package br.com.logiflow.estoque.kafka;
+import br.com.logiflow.estoque.event.PedidoCriadoEvent; import org.apache.kafka.clients.consumer.ConsumerRecord; import org.slf4j.*; import org.springframework.kafka.annotation.KafkaListener; import org.springframework.stereotype.Component;
+@Component public class DltConsumer {private static final Logger log=LoggerFactory.getLogger(DltConsumer.class);@KafkaListener(topics="${logiflow.topics.pedido-criado}.DLT",groupId="estoque-dlt-monitor-v1")public void monitorar(PedidoCriadoEvent e,ConsumerRecord<String,PedidoCriadoEvent> r){log.error("DLT exige intervenção eventId={} pedidoId={} partition={} offset={}",e.eventId(),e.pedidoId(),r.partition(),r.offset());}}

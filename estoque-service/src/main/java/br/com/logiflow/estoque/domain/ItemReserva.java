@@ -1,0 +1,3 @@
+package br.com.logiflow.estoque.domain;
+import jakarta.persistence.*; import java.util.UUID;
+@Entity @Table(name="itens_reserva") public class ItemReserva {@Id private UUID id;@ManyToOne(fetch=FetchType.LAZY)@JoinColumn(name="reserva_id",nullable=false)private Reserva reserva;@Column(name="produto_id",nullable=false)private String produtoId;@Column(nullable=false)private int quantidade;protected ItemReserva(){}ItemReserva(Reserva r,String p,int q){id=UUID.randomUUID();reserva=r;produtoId=p;quantidade=q;}public String getProdutoId(){return produtoId;}public int getQuantidade(){return quantidade;}}

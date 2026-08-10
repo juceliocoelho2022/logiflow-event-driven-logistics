@@ -1,0 +1,3 @@
+package br.com.logiflow.estoque.api;
+import br.com.logiflow.estoque.domain.*; import org.springframework.web.bind.annotation.*; import java.time.Instant; import java.util.*;
+@RestController @RequestMapping("/api/reservas") @CrossOrigin(origins="*") public class ReservaController {private final EstoqueService service;public ReservaController(EstoqueService s){service=s;}@GetMapping public List<Response> listar(){return service.listar().stream().map(r->new Response(r.getId(),r.getPedidoId(),r.getStatus().name(),r.getCriadaEm(),r.getItens().stream().map(i->new Item(i.getProdutoId(),i.getQuantidade())).toList())).toList();}public record Response(UUID id,UUID pedidoId,String status,Instant criadaEm,List<Item> itens){}public record Item(String produtoId,int quantidade){}}
