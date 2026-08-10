@@ -1,0 +1,32 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: pedido-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5435/pedidos}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:89327934}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+logiflow:
+  topics:
+    pedido-criado: logiflow.pedidos.criados.v1
+  outbox:
+    fixed-delay: 2000
