@@ -30,3 +30,6 @@ management:
 logiflow:
   topics:
     pedido-criado: logiflow.pedidos.criados.v1
+    reserva-confirmada: logiflow.reservas.confirmadas.v1
+  outbox:
+    fixed-delay: 2000
