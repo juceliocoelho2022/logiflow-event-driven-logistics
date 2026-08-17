@@ -1,173 +1,150 @@
-# LogiFlow
+# LogiFlow — Event-Driven Logistics
 
-Sistema de logística orientado a eventos desenvolvido para portfólio, utilizando Java 21, Spring Boot, PostgreSQL, Apache Kafka, Docker e React.
+[![Java](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)](https://openjdk.org/)
+[![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.5.4-6DB33F?logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
+[![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-3.9.1-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-O projeto demonstra comunicação assíncrona entre microsserviços, consistência transacional com o padrão Transactional Outbox, processamento idempotente de eventos e tratamento de falhas com Dead Letter Topic.
+Plataforma de logística distribuída que recebe pedidos, publica eventos de forma confiável e reserva estoque de maneira assíncrona. O projeto demonstra como lidar com problemas reais de sistemas orientados a eventos: **dual write**, mensagens duplicadas, falhas transitórias e mensagens não processáveis.
 
-## Funcionalidades
+> Projeto de portfólio desenvolvido por **Jucelio Farias Coelho**, com foco em uma posição de Desenvolvedor Java Backend.
 
-* Criação e consulta de pedidos;
-* persistência transacional de pedidos e eventos;
-* publicação assíncrona de eventos no Apache Kafka;
-* reserva automática de estoque;
-* processamento idempotente por `eventId`;
-* retentativas para falhas transitórias;
-* encaminhamento de mensagens com falha para DLT;
-* painel web para acompanhamento das operações;
-* documentação das APIs com Swagger/OpenAPI;
-* inicialização completa do ambiente com Docker Compose.
+[Visão geral](#visão-geral) · [Arquitetura](#arquitetura) · [Como executar](#como-executar) · [Testar a API](#testar-a-api) · [Evidências](#evidências-de-qualidade) · [Decisões técnicas](#decisões-técnicas)
 
-## Arquitetura da Sprint 1
+---
 
-1. O `pedido-service` recebe uma requisição em `POST /api/pedidos`.
-2. O pedido e seu evento Outbox são gravados na mesma transação no PostgreSQL.
-3. O publicador Outbox envia o evento pendente para o tópico `logiflow.pedidos.criados.v1`.
-4. O `pedidoId` é utilizado como chave Kafka para preservar a ordem relativa dos eventos.
-5. O `estoque-service` consome o evento e verifica sua duplicidade por `eventId`.
-6. Uma reserva de estoque é registrada quando o evento ainda não foi processado.
-7. Falhas transitórias passam pelas retentativas configuradas.
-8. Depois das tentativas, a mensagem com falha é encaminhada para `logiflow.pedidos.criados.v1.DLT`.
+## Visão geral
 
-```text
-Cliente
-   │
-   ▼
-pedido-service
-   │
-   ├── PostgreSQL: Pedido + Outbox
-   │
-   ▼
-Apache Kafka
-   │
-   ▼
-estoque-service
-   │
-   ├── Controle de idempotência
-   ├── Reserva de estoque
-   └── Retentativas e DLT
+Uma chamada REST cria um pedido no `pedido-service`. Pedido e evento são persistidos na **mesma transação** por meio do padrão Transactional Outbox. Em seguida, o evento é publicado no Apache Kafka e consumido pelo `estoque-service`, que cria a reserva sem acoplamento direto entre os serviços.
+
+### O que este projeto comprova
+
+| Competência | Implementação no LogiFlow |
+|---|---|
+| Java moderno | Java 21 e Spring Boot 3.5.4 |
+| Microsserviços | Serviços de pedidos e estoque com bancos independentes |
+| Event-driven | Comunicação assíncrona via Apache Kafka |
+| Consistência | Transactional Outbox evita pedido salvo sem evento persistido |
+| Confiabilidade | Entrega `at-least-once`, idempotência por `eventId`, retries e DLT |
+| Persistência | PostgreSQL por serviço e migrations versionadas com Flyway |
+| APIs | REST, Bean Validation e documentação Swagger/OpenAPI |
+| Infraestrutura | Ambiente reproduzível com Docker Compose e health checks |
+| Frontend | Painel React/Vite servido por Nginx |
+| Qualidade | Testes automatizados e validação manual do fluxo completo |
+
+## Arquitetura
+
+```mermaid
+flowchart LR
+    C[Cliente] -->|POST pedido| P[pedido-service]
+    P -->|Pedido + Outbox| DB1[(PostgreSQL)]
+    P -->|PedidoCriadoEvent| K[(Apache Kafka)]
+    K --> E[estoque-service]
+    E -->|Reserva + eventId| DB2[(PostgreSQL)]
+    P --> API1[Swagger]
+    E --> API2[Swagger]
 ```
 
 ![Arquitetura do LogiFlow](docs/images/logiflow-arquitetura.png)
 
-## Tecnologias
+### Fluxo principal
 
-### Backend
+1. O cliente envia `POST /api/pedidos`.
+2. O `pedido-service` grava o pedido e o registro da Outbox na mesma transação.
+3. O Outbox Publisher envia `PedidoCriadoEvent` ao tópico `logiflow.pedidos.criados.v1`.
+4. O `pedidoId` é usado como chave Kafka, preservando a ordem relativa dos eventos do pedido.
+5. O `estoque-service` verifica o `eventId` antes de processar a mensagem.
+6. Se o evento for novo, a reserva e o identificador processado são persistidos.
+7. Falhas transitórias passam por duas retentativas.
+8. Após o esgotamento das tentativas, a mensagem segue para `logiflow.pedidos.criados.v1.DLT`.
 
-* Java 21;
-* Spring Boot;
-* Spring Web;
-* Spring Data JPA;
-* Spring for Apache Kafka;
-* Bean Validation;
-* Flyway;
-* Maven;
-* JUnit;
-* Mockito.
+### Componentes
 
-### Dados e mensageria
+| Componente | Responsabilidade | Porta |
+|---|---|---:|
+| `pedido-service` | Criar/consultar pedidos e publicar eventos via Outbox | 8081 |
+| `estoque-service` | Consumir eventos, garantir idempotência e reservar estoque | 8082 |
+| `painel-web` | Visualizar pedidos e reservas | 3000 |
+| Apache Kafka | Broker de eventos em modo KRaft | 9092 |
+| Kafka UI | Inspecionar tópicos, partições e mensagens | 8090 |
+| PostgreSQL — pedidos | Banco exclusivo do serviço de pedidos | 5435 |
+| PostgreSQL — estoque | Banco exclusivo do serviço de estoque | 5436 |
 
-* PostgreSQL;
-* Apache Kafka;
-* Transactional Outbox;
-* Dead Letter Topic;
-* processamento idempotente.
+Mais detalhes e garantias estão em [ARQUITETURA.md](ARQUITETURA.md).
 
-### Frontend e infraestrutura
+## Principais funcionalidades
 
-* React;
-* Docker;
-* Docker Compose;
-* Nginx;
-* Kafka UI;
-* Swagger/OpenAPI.
+- Criação e consulta de pedidos via API REST;
+- persistência atômica de pedido e evento com Transactional Outbox;
+- publicação e consumo assíncrono no Kafka;
+- reserva automática de estoque;
+- consumidor idempotente por `eventId`;
+- retries para falhas transitórias;
+- Dead Letter Topic para mensagens não processáveis;
+- migrations de banco com Flyway;
+- painel web para acompanhamento do fluxo;
+- Swagger/OpenAPI nos dois serviços;
+- ambiente completo iniciado com um único comando.
 
-## Estrutura do projeto
+## Stack
 
-```text
-logiflow-event-driven-logistics/
-├── pedido-service/
-│   ├── src/main/java/
-│   ├── src/main/resources/
-│   ├── src/test/
-│   ├── Dockerfile
-│   └── pom.xml
-├── estoque-service/
-│   ├── src/main/java/
-│   ├── src/main/resources/
-│   ├── Dockerfile
-│   └── pom.xml
-├── painel-web/
-│   ├── src/
-│   ├── Dockerfile
-│   ├── nginx.conf
-│   └── package.json
-├── docs/
-│   └── images/
-│       └── logiflow-arquitetura.png
-├── docker-compose.yml
-├── ARQUITETURA.md
-├── LICENSE
-└── README.md
-```
+| Camada | Tecnologias |
+|---|---|
+| Backend | Java 21, Spring Boot 3.5.4, Spring Web, Spring Data JPA, Spring Kafka |
+| Dados | PostgreSQL 16, Flyway |
+| Mensageria | Apache Kafka 3.9.1, Transactional Outbox, DLT |
+| Testes | JUnit, Spring Boot Test |
+| Frontend | React, Vite, Lucide React, Nginx |
+| Infraestrutura | Docker, Docker Compose, Kafka UI |
+| Documentação | Swagger/OpenAPI, Mermaid |
 
-## Requisitos
+## Como executar
 
-Para executar o ambiente completo:
+### Pré-requisitos
 
-* Docker Desktop;
-* Docker Compose.
+- Git;
+- Docker Desktop com Docker Compose.
 
-Para desenvolvimento fora do Docker:
-
-* Java 21;
-* Maven 3.9 ou superior;
-* Node.js 20 ou superior;
-* PostgreSQL;
-* Apache Kafka.
-
-## Executando o projeto
-
-Clone o repositório:
+### Inicialização rápida
 
 ```bash
 git clone https://github.com/juceliocoelho2022/logiflow-event-driven-logistics.git
 cd logiflow-event-driven-logistics
-```
-
-Suba todos os serviços:
-
-```bash
-docker compose up --build
-```
-
-Para executar em segundo plano:
-
-```bash
 docker compose up --build -d
 ```
 
-Confira os containers:
+Aguarde os health checks e confirme o ambiente:
 
 ```bash
 docker compose ps
 ```
 
-Para encerrar o ambiente:
+### Acessos locais
+
+| Recurso | URL |
+|---|---|
+| Painel web | http://localhost:3000 |
+| Swagger — Pedidos | http://localhost:8081/swagger-ui.html |
+| Swagger — Estoque | http://localhost:8082/swagger-ui.html |
+| Kafka UI | http://localhost:8090 |
+
+Para encerrar:
 
 ```bash
 docker compose down
 ```
 
-## Acessos
+Para remover também os volumes locais:
 
-| Serviço           | Endereço                              |
-| ----------------- | ------------------------------------- |
-| Painel web        | http://localhost:3000                 |
-| Swagger — Pedidos | http://localhost:8081/swagger-ui.html |
-| Swagger — Estoque | http://localhost:8082/swagger-ui.html |
-| Kafka UI          | http://localhost:8090                 |
+```bash
+docker compose down -v
+```
 
-## Criando um pedido
+## Testar a API
+
+### 1. Criar um pedido
 
 ```bash
 curl -X POST http://localhost:8081/api/pedidos \
@@ -184,125 +161,95 @@ curl -X POST http://localhost:8081/api/pedidos \
   }'
 ```
 
-## Consultando pedidos e reservas
-
-Consultar pedidos:
+### 2. Consultar pedidos
 
 ```bash
 curl http://localhost:8081/api/pedidos
 ```
 
-Consultar reservas:
+### 3. Consultar reservas
 
 ```bash
 curl http://localhost:8082/api/reservas
 ```
 
-Os resultados também podem ser acompanhados pelo painel web.
+O resultado esperado é um pedido com status `CRIADO` e uma reserva com status `RESERVADO`. O evento pode ser acompanhado pelo Kafka UI e o fluxo também aparece no painel web.
 
-## Testes automatizados
+## Evidências de qualidade
 
-Execute os testes do serviço de pedidos:
+### Testes automatizados
 
 ```bash
 cd pedido-service
 mvn test
 ```
 
-Os testes verificam as regras da camada de aplicação e o comportamento esperado durante a criação dos pedidos.
+### Cenários validados
 
-## Validação da Sprint 1
+| Cenário | Evidência esperada | Status |
+|---|---|---:|
+| Criação de pedido | Pedido persistido com status `CRIADO` | ✅ |
+| Transactional Outbox | Pedido e evento salvos na mesma transação | ✅ |
+| Publicação Kafka | Evento no tópico principal | ✅ |
+| Consumo | Evento recebido pelo serviço de estoque | ✅ |
+| Reserva | Reserva criada com status `RESERVADO` | ✅ |
+| Idempotência | Evento repetido não cria segunda reserva | ✅ |
+| Retentativas | Falha transitória aciona novas tentativas | ✅ |
+| DLT | Mensagem inválida é preservada no tópico de erro | ✅ |
 
-A Sprint 1 foi validada por meio de testes manuais do fluxo completo orientado a eventos.
+### Garantias e limites
 
-### Fluxo principal
+- O sistema adota entrega **pelo menos uma vez** (`at-least-once`).
+- O publicador pode reenviar um evento se falhar entre a publicação e a atualização da Outbox; por isso, o consumidor é idempotente.
+- O projeto não promete “exactly once” de ponta a ponta.
+- O processamento mantém a ordem relativa dos eventos do mesmo pedido por meio da chave `pedidoId`.
+
+Esses limites são intencionais e documentam o trade-off arquitetural — arquitetura séria também diz o que **não** garante.
+
+## Decisões técnicas
+
+| Decisão | Motivo |
+|---|---|
+| Banco por serviço | Reduz acoplamento de dados entre os microsserviços |
+| Transactional Outbox | Evita o problema de dual write entre PostgreSQL e Kafka |
+| Contrato de evento próprio | Não expõe diretamente entidades JPA na mensageria |
+| `pedidoId` como chave | Mantém eventos do mesmo pedido na mesma partição |
+| Idempotência por `eventId` | Torna seguro o reprocessamento de mensagens duplicadas |
+| Retry + DLT | Separa falhas transitórias de mensagens que exigem análise |
+| Flyway | Mantém o schema reproduzível e versionado |
+| Docker Compose | Permite avaliação local rápida e consistente |
+
+## Estrutura do repositório
 
 ```text
-Pedido → Transactional Outbox → Apache Kafka → Estoque → Reserva
+logiflow-event-driven-logistics/
+├── pedido-service/       # API de pedidos e Transactional Outbox
+├── estoque-service/      # Consumer Kafka, idempotência e reservas
+├── painel-web/           # React + Vite + Nginx
+├── docs/images/          # Diagrama de arquitetura
+├── docker-compose.yml    # Ambiente local completo
+├── ARQUITETURA.md        # Decisões e garantias técnicas
+└── README.md
 ```
 
-Resultados verificados:
+## Roadmap
 
-* pedido criado com status `CRIADO`;
-* evento persistido na Outbox;
-* evento publicado no tópico `logiflow.pedidos.criados.v1`;
-* mensagem consumida pelo `estoque-service`;
-* reserva criada com status `RESERVADO`;
-* dados disponibilizados pelo painel e pelas APIs.
-
-### Teste de idempotência
-
-O mesmo evento foi republicado mantendo o mesmo `eventId`.
-
-Resultados:
-
-* o Kafka recebeu duas mensagens com o mesmo `eventId`;
-* o consumidor identificou a duplicidade;
-* apenas uma reserva permaneceu registrada;
-* o log apresentou a mensagem `Evento duplicado ignorado`.
-
-Isso comprova que entregas repetidas não geram reservas duplicadas.
-
-### Teste da Dead Letter Topic
-
-Uma mensagem inválida foi publicada de maneira controlada no tópico principal.
-
-Resultados:
-
-* o processamento da mensagem falhou;
-* as retentativas configuradas foram executadas;
-* a mensagem foi encaminhada para `logiflow.pedidos.criados.v1.DLT`;
-* o conteúdo original foi preservado;
-* nenhuma reserva inválida foi criada;
-* a quantidade de reservas permaneceu em `1`.
-
-### Evidências dos testes
-
-| Teste                                 | Resultado  |
-| ------------------------------------- | ---------- |
-| Criação de pedido                     | ✅ Aprovado |
-| Persistência via Transactional Outbox | ✅ Aprovado |
-| Publicação no Apache Kafka            | ✅ Aprovado |
-| Consumo pelo serviço de estoque       | ✅ Aprovado |
-| Reserva automática                    | ✅ Aprovado |
-| Idempotência por `eventId`            | ✅ Aprovado |
-| Retentativas de processamento         | ✅ Aprovado |
-| Encaminhamento para DLT               | ✅ Aprovado |
-| Consistência do estoque               | ✅ Aprovado |
-
-## Decisões arquiteturais
-
-* O evento possui contrato próprio e não reutiliza diretamente uma entidade JPA;
-* o padrão Transactional Outbox reduz o risco de salvar um pedido sem persistir seu evento;
-* o `pedidoId` é utilizado como chave Kafka para preservar a ordem relativa dos eventos;
-* o `eventId` possui unicidade no consumidor para impedir processamentos duplicados;
-* o offset é confirmado somente após a conclusão da transação do consumidor;
-* falhas transitórias passam por retentativas antes do envio para a DLT;
-* a DLT possui listener e registro de logs para análise das falhas;
-* as migrations do banco de dados são controladas pelo Flyway.
-
-Mais detalhes estão disponíveis em [ARQUITETURA.md](ARQUITETURA.md).
-
-## Próximas sprints
-
-* [ ] Implementar expedição e rastreamento de entregas;
-* [ ] adicionar autenticação JWT e controle de perfis;
-* [ ] criar reprocessamento seguro de mensagens da DLT;
-* [ ] adicionar métricas com Prometheus e Grafana;
-* [ ] implementar tracing distribuído;
-* [ ] criar testes de integração com Testcontainers;
-* [ ] adicionar Schema Registry e evolução de contratos;
-* [ ] configurar pipeline de CI/CD com GitHub Actions.
+- [ ] Serviço de expedição e rastreamento;
+- [ ] autenticação JWT e autorização por perfis;
+- [ ] reprocessamento seguro da DLT;
+- [ ] métricas com Prometheus e Grafana;
+- [ ] tracing distribuído;
+- [ ] testes de integração com Testcontainers;
+- [ ] Schema Registry e evolução de contratos;
+- [ ] pipeline de CI/CD com GitHub Actions.
 
 ## Autor
 
-**Jucelio Farias Coelho**
+**Jucelio Farias Coelho**  
+Professor técnico em Desenvolvimento de Sistemas e Desenvolvedor Java Backend.
 
-Professor técnico em Desenvolvimento de Sistemas e desenvolvedor Java Backend em transição profissional.
-
-* [LinkedIn](https://www.linkedin.com/in/jucelio-desenvolvedor-sistema)
-* [GitHub](https://github.com/juceliocoelho2022)
+[LinkedIn](https://www.linkedin.com/in/jucelio-desenvolvedor-sistema) · [GitHub](https://github.com/juceliocoelho2022)
 
 ## Licença
 
-Este projeto está licenciado sob a licença MIT. Consulte o arquivo [LICENSE](LICENSE) para mais informações.
+Distribuído sob a licença MIT. Consulte [LICENSE](LICENSE).
